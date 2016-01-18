@@ -27,6 +27,13 @@
 *.i*86
 *.x86_64
 *.hex
+aria
 
 # Debug files
 *.dSYM/
+
+# Mac
+.DS_Store
+
+# Extra Docs
+ext-docs/*.*
