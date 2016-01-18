@@ -31,6 +31,8 @@
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include "timer_e.h"
+#include "xorshift_e.h"
 #define WHEN_ARIA_TEST(x) x
 #else
 #define WHEN_ARIA_TEST(x)
@@ -460,7 +462,8 @@ compute_ek (aria_u128_t W0
 static inline aria_u128_t aria_A (aria_u128_t x)
 {
   aria_u128_t y;
-
+#if 0
+  /* For 1000000 iterations: 1315.81 ns (1315.75 ns) per iteration with 0 errors */
   y.left = 
      ((uint64_t )(x3 ^ x4 ^ x6 ^ x8  ^ x9  ^ x13 ^ x14) << 56)
    | ((uint64_t )(x2 ^ x5 ^ x7 ^ x8  ^ x9  ^ x12 ^ x15) << 48)
@@ -480,6 +483,34 @@ static inline aria_u128_t aria_A (aria_u128_t x)
    | ((uint64_t )(x0 ^ x3 ^ x6 ^ x7  ^ x8  ^ x10 ^ x13) << 16)
    | ((uint64_t )(x0 ^ x3 ^ x4 ^ x5  ^ x9  ^ x11 ^ x14) <<  8)
    |  (uint64_t )(x1 ^ x2 ^ x4 ^ x5  ^ x8  ^ x10 ^ x15);
+#else
+  /* For 1000000 iterations: 1104.03 ns (1104.03 ns) per iteration with 0 errors */
+  /* eliminate some common subexpressions */
+  uint8_t t0 = x0 ^ x7 ^ x10 ^ x13;
+  uint8_t t1 = x1 ^ x6 ^ x11 ^ x12;
+  uint8_t t2 = x2 ^ x5 ^ x8  ^ x15;
+  uint8_t t3 = x3 ^ x4 ^ x9  ^ x14;
+
+  y.left = 
+     ((uint64_t )(t3      ^ x6 ^ x8        ^ x13      ) << 56)
+   | ((uint64_t )(t2      ^ x7       ^ x9  ^ x12      ) << 48)
+   | ((uint64_t )(t1 ^ x4      ^ x10             ^ x15) << 40)
+   | ((uint64_t )(t0 ^ x5            ^ x11       ^ x14) << 32)
+   | ((uint64_t )(x0 ^ t2            ^ x11 ^ x14      ) << 24)
+   | ((uint64_t )(x1 ^ t3            ^ x10       ^ x15) << 16)
+   | ((uint64_t )(t0 ^ x2      ^ x9        ^ x12      ) <<  8)
+   |  (uint64_t )(t1 ^ x3      ^ x8              ^ x13);
+
+  y.right = 
+     ((uint64_t )(t0 ^ x1 ^ x4                   ^ x15) << 56)
+   | ((uint64_t )(x0 ^ t1 ^ x5                   ^ x14) << 48)
+   | ((uint64_t )(t2 ^ x3      ^ x6        ^ x13      ) << 40)
+   | ((uint64_t )(x2 ^ t3      ^ x7        ^ x12      ) << 32)
+   | ((uint64_t )(t1 ^ x2      ^ x7  ^ x9             ) << 24)
+   | ((uint64_t )(t0 ^ x3 ^ x6       ^ x8             ) << 16)
+   | ((uint64_t )(x0 ^ t3      ^ x5        ^ x11      ) <<  8)
+   |  (uint64_t )(x1 ^ t2 ^ x4             ^ x10      );
+#endif
 
   return y;
 }
@@ -957,44 +988,44 @@ int main (int argc, char **argv)
     }
 
   }
-  else if ((argc == 3) && (0 == strcmp("-h", argv[1])))
+  else if ((argc == 2) && (0 == strcmp("-t", argv[1])))
   {
-    /* TO DO */
-  }
 
+    (void)xorshift128plus_seed(0x5a5a5a5a5a5a5a5au);
+
+    const uint32_t iterations = 1000000u;
+
+    uint32_t errors = 0u;
+
+    double startm = timer_e_nanoseconds();
+    double startg = timer_e_nanoseconds_gtod();
+
+    for (uint32_t i = 0u; i < iterations; i++)
+    {
+      aria_u128_t KeyLeft    = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+      aria_u128_t KeyRight   = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+      aria_u128_t Plaintext  = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+
+      aria_u128_t Ciphertext = aria_encrypt_256(KeyLeft, KeyRight, Plaintext);
+
+      aria_u128_t P = aria_decrypt_256(KeyLeft, KeyRight, Ciphertext);
+
+      if (0 != memcmp((const void *)&Plaintext, (const void *)&P, sizeof(aria_u128_t)))
+      {
+        errors++;
+      }
+    }
+
+    double endm = timer_e_nanoseconds();
+    double endg = timer_e_nanoseconds_gtod();
+
+    fprintf(stderr, "For %u iterations: %g ns (%g ns) per iteration with %u errors\n"
+                  , iterations
+                  , (endm - startm) / iterations
+                  , (endg - startg) / iterations
+                  , errors
+            );
+  }
 }
 
-#if 0
-#include <mach/mach.h>
-#include <mach/mach_time.h>
-...
-
-  static double timeConvert = 0.0;
-  if ( timeConvert == 0.0 )
-  {
-    mach_timebase_info_data_t timeBase;
-    (void)mach_timebase_info( &timeBase );
-    timeConvert = (double)timeBase.numer / (double)timeBase.denom / 1000000000.0;
-  }
-  return (double)mach_absolute_time( ) * timeConvert;
-
-
-#include <sys/time.h>
-
-  struct timeval start_;
-  struct timeval end_;
-
-  gettimeofday(&start_, NULL);
-
-  gettimeofday(&end_, NULL);
-
-  double GetElapsedMilliseconds() {
-    return (end_.tv_sec - start_.tv_sec) * 1000.0
-      + (end_.tv_usec - start_.tv_usec) / 1000.0;
-  }
-
 #endif
-
-
-#endif
-
