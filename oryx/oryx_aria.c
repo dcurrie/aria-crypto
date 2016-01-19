@@ -654,5 +654,49 @@ int main (int argc, char **argv)
                 , (endm - startm) / iterations
                 , errors
           );
+
+
+   errors = 0u;
+
+   AriaContext ac;
+
+   const uint32_t keystride = 128u * 2048u;
+
+   startm = timer_e_nanoseconds();
+   
+   for (uint32_t i = 0u; i < iterations; i++)
+   {
+      if ((i % keystride) == 0)
+      {
+         aria_u128_t KeyLeft   = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+         aria_u128_t KeyRight  = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+         struct eh_s { aria_u128_t kh; aria_u128_t kl; } eh = { KeyLeft, KeyRight };
+         ariaInit(&ac, (const uint8_t *)&eh, 32);
+      }
+      aria_u128_t Plaintext  = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+ 
+      union { uint8_t Cb[16]; aria_u128_t C; } ue;
+ 
+      ariaEncryptBlock(&ac, (const uint8_t *)&Plaintext, ue.Cb);
+ 
+      union { uint8_t Cb[16]; aria_u128_t C; } ud;
+ 
+      ariaDecryptBlock(&ac, (const uint8_t *)&Plaintext, ud.Cb);
+ 
+      if (0 != memcmp((const void *)&Plaintext, (const void *)&ud.C, sizeof(aria_u128_t)))
+      {
+        errors++;
+      }
+   }
+
+    endm = timer_e_nanoseconds();
+
+    fprintf(stderr, "For %u iterations %u keystride: %g ns per iteration with %u errors\n"
+                  , iterations
+                  , keystride
+                  , (endm - startm) / iterations
+                  , errors
+            );
+
 }
 

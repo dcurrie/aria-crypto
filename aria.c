@@ -24,7 +24,7 @@
 /* This file implements the ARIA Encryption Algorithm as per IETF RFC-5794 
 */
 
-#include <stdint.h>
+#include "aria.h"
 
 #ifdef ARIA_TEST
 #include <stdio.h>
@@ -57,8 +57,6 @@
 **       0x  hexadecimal representation
 ** 
 */
-
-typedef struct aria_u128_s { uint64_t left; uint64_t right; } aria_u128_t;
 
 static inline aria_u128_t rol (aria_u128_t x, uint8_t cnt) /* 0 < cnt < 64 */
 {
@@ -609,16 +607,16 @@ static inline aria_u128_t aria_FE (aria_u128_t d, aria_u128_t rk)
 **    C  = SL2(P15 ^ ek16) ^ ek17;     // Round 16
 */
 
-static inline aria_u128_t 
-aria_crypt (uint8_t rounds, aria_u128_t ek[], aria_u128_t Plaintext)
+aria_u128_t 
+aria_crypt (aria_key_schedule_t *ks, aria_u128_t text)
 {
-  aria_u128_t P = aria_FO(Plaintext, ek[1]);
-  for (int i = 2; i < rounds; )
+  aria_u128_t p = aria_FO(text, ks->ek[1]);
+  for (uint32_t i = 2u; i < ks->rounds; )
   {
-    P = aria_FE(P, ek[i++]);
-    P = aria_FO(P, ek[i++]);
+    p = aria_FE(p, ks->ek[i++]);
+    p = aria_FO(p, ks->ek[i++]);
   }
-  return xor(aria_SL2(xor(P, ek[rounds])), ek[rounds + 1]);
+  return xor(aria_SL2(xor(p, ks->ek[ks->rounds])), ks->ek[ks->rounds + 1]);
 }
 
 /*
@@ -666,51 +664,6 @@ static const aria_u128_t C1 = { 0x517cc1b727220a94, 0xfe13abe8fa9a6ee0 };
 static const aria_u128_t C2 = { 0x6db14acc9e21c820, 0xff28b1d5ef5de2b0 };
 static const aria_u128_t C3 = { 0xdb92371d2126e970, 0x0324977504e8c90e };
 
-aria_u128_t 
-aria_encrypt_128 (aria_u128_t Key, aria_u128_t Plaintext)
-{
-  aria_u128_t ek[18];
-
-  aria_u128_t W0 = Key;
-  aria_u128_t W1 =     aria_FO(W0, C1);
-  aria_u128_t W2 = xor(aria_FE(W1, C2), W0);
-  aria_u128_t W3 = xor(aria_FO(W2, C3), W1);
-
-  compute_ek(W0, W1, W2, W3, ek);
-
-  return aria_crypt(12u, ek, Plaintext);
-}
-
-aria_u128_t 
-aria_encrypt_192 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Plaintext)
-{
-  aria_u128_t ek[18];
-
-  aria_u128_t W0 = KeyLeft;
-  aria_u128_t W1 = xor(aria_FO(W0, C2), KeyRight);
-  aria_u128_t W2 = xor(aria_FE(W1, C3), W0);
-  aria_u128_t W3 = xor(aria_FO(W2, C1), W1);
-
-  compute_ek(W0, W1, W2, W3, ek);
-
-  return aria_crypt(14u, ek, Plaintext);
-}
-
-aria_u128_t 
-aria_encrypt_256 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Plaintext)
-{
-  aria_u128_t ek[18];
-
-  aria_u128_t W0 = KeyLeft;
-  aria_u128_t W1 = xor(aria_FO(W0, C3), KeyRight);
-  aria_u128_t W2 = xor(aria_FE(W1, C1), W0);
-  aria_u128_t W3 = xor(aria_FO(W2, C2), W1);
-
-  compute_ek(W0, W1, W2, W3, ek);
-
-  return aria_crypt(16u, ek, Plaintext);
-}
-
 /*
 **    The number of rounds depends on the size of the master key as
 **    follows.
@@ -746,89 +699,173 @@ aria_encrypt_256 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Plainte
 **    ..., dk13, respectively.
 */
 
-aria_u128_t 
-aria_decrypt_128 (aria_u128_t Key, aria_u128_t Ciphertext)
+aria_error_code_t 
+aria_init_key_schedule (aria_key_schedule_t *keysched
+                      , aria_u128_t        KeyLeft
+                      , aria_u128_t        KeyRight
+                      , aria_cryto_mode_t  mode
+                      , uint32_t key_size_in_bits)
 {
-  aria_u128_t ek[18];
+  aria_u128_t CK1;
+  aria_u128_t CK2;
+  aria_u128_t CK3;
+  uint32_t rounds = 0u;
 
-  aria_u128_t W0 = Key;
-  aria_u128_t W1 =     aria_FO(W0, C1);
-  aria_u128_t W2 = xor(aria_FE(W1, C2), W0);
-  aria_u128_t W3 = xor(aria_FO(W2, C3), W1);
-
-  compute_ek(W0, W1, W2, W3, ek);
-
-  ek[ 0] = ek[13];
-  ek[13] = ek[ 1];
-  ek[ 1] = ek[ 0];
-
-  for (int i = 2, j = 12; i < j; i++, j--)
+  if (NULL == keysched)
   {
-    ek[ 0] = ek[ j];
-    ek[ j] = aria_A(ek[ i]);
-    ek[ i] = aria_A(ek[ 0]);
+    return ARG_BAD;
   }
-  ek[7] = aria_A(ek[ 7]);
-
-  return aria_crypt(12u, ek, Ciphertext);
-}
-
-aria_u128_t 
-aria_decrypt_192 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Ciphertext)
-{
-  aria_u128_t ek[18];
-
+  switch (key_size_in_bits)
+  {
+    case 256:
+      rounds = keysched->rounds = 16u;
+      CK1 = C3;
+      CK2 = C1;
+      CK3 = C2;
+      break;
+    case 192:
+      rounds = keysched->rounds = 14u;
+      CK1 = C2;
+      CK2 = C3;
+      CK3 = C1;
+      KeyRight.right = 0u;
+      break;
+    case 128:
+      rounds = keysched->rounds = 12u;
+      CK1 = C1;
+      CK2 = C2;
+      CK3 = C3;
+      KeyRight.left  = 0u;
+      KeyRight.right = 0u;
+      break;
+    default:
+      return KEY_SIZE_BAD;
+  }
+  switch (mode)
+  {
+    case ENCRYPT:
+      keysched->mode = ENCRYPT;
+      break;
+    case DECRYPT:
+      keysched->mode = DECRYPT;
+      break;
+    default:
+      return CRYPTO_MODE_BAD;
+  }
   aria_u128_t W0 = KeyLeft;
-  aria_u128_t W1 = xor(aria_FO(W0, C2), KeyRight);
-  aria_u128_t W2 = xor(aria_FE(W1, C3), W0);
-  aria_u128_t W3 = xor(aria_FO(W2, C1), W1);
+  aria_u128_t W1 = xor(aria_FO(W0, CK1), KeyRight);
+  aria_u128_t W2 = xor(aria_FE(W1, CK2), W0);
+  aria_u128_t W3 = xor(aria_FO(W2, CK3), W1);
 
-  compute_ek(W0, W1, W2, W3, ek);
+  compute_ek(W0, W1, W2, W3, keysched->ek);
 
-  ek[ 0] = ek[15];
-  ek[15] = ek[ 1];
-  ek[ 1] = ek[ 0];
-
-  for (int i = 2, j = 14; i < j; i++, j--)
+  if (DECRYPT == mode)
   {
-    ek[ 0] = ek[ j];
-    ek[ j] = aria_A(ek[ i]);
-    ek[ i] = aria_A(ek[ 0]);
+    keysched->ek[ 0] = keysched->ek[rounds + 1];
+    keysched->ek[rounds + 1] = keysched->ek[ 1];
+    keysched->ek[ 1] = keysched->ek[ 0];
+
+    for (uint32_t i = 2, j = rounds; i < j; i++, j--)
+    {
+      keysched->ek[ 0] = keysched->ek[ j];
+      keysched->ek[ j] = aria_A(keysched->ek[ i]);
+      keysched->ek[ i] = aria_A(keysched->ek[ 0]);
+    }
+    rounds = (rounds / 2u) + 1u;
+    keysched->ek[rounds] = aria_A(keysched->ek[rounds]);
   }
-  ek[8] = aria_A(ek[ 8]);
-
-  return aria_crypt(14u, ek, Ciphertext);
-}
-
-aria_u128_t 
-aria_decrypt_256 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Ciphertext)
-{
-  aria_u128_t ek[18];
-
-  aria_u128_t W0 = KeyLeft;
-  aria_u128_t W1 = xor(aria_FO(W0, C3), KeyRight);
-  aria_u128_t W2 = xor(aria_FE(W1, C1), W0);
-  aria_u128_t W3 = xor(aria_FO(W2, C2), W1);
-
-  compute_ek(W0, W1, W2, W3, ek);
-
-  ek[ 0] = ek[17];
-  ek[17] = ek[ 1];
-  ek[ 1] = ek[ 0];
-
-  for (int i = 2, j = 16; i < j; i++, j--)
-  {
-    ek[ 0] = ek[ j];
-    ek[ j] = aria_A(ek[ i]);
-    ek[ i] = aria_A(ek[ 0]);
-  }
-  ek[9] = aria_A(ek[ 9]);
-
-  return aria_crypt(16u, ek, Ciphertext);
+  return NO_ERROR;
 }
 
 
 #ifdef ARIA_TEST
+
+static aria_u128_t 
+aria_encrypt_128 (aria_u128_t Key, aria_u128_t Plaintext)
+{
+  aria_key_schedule_t ks;
+
+  aria_error_code_t err = aria_init_key_schedule(&ks, Key, /* don't care */ Key, ENCRYPT, 128u);
+
+  if (NO_ERROR != err)
+  {
+    fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+  }
+  return aria_crypt(&ks, Plaintext);
+}
+
+static aria_u128_t 
+aria_encrypt_192 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Plaintext)
+{
+  aria_key_schedule_t ks;
+
+  aria_error_code_t err = aria_init_key_schedule(&ks, KeyLeft, KeyRight, ENCRYPT, 192u);
+
+  if (NO_ERROR != err)
+  {
+    fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+  }
+  return aria_crypt(&ks, Plaintext);
+}
+
+static aria_u128_t 
+aria_encrypt_256 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Plaintext)
+{
+  aria_key_schedule_t ks;
+
+  aria_error_code_t err = aria_init_key_schedule(&ks, KeyLeft, KeyRight, ENCRYPT, 256u);
+
+  if (NO_ERROR != err)
+  {
+    fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+  }
+  return aria_crypt(&ks, Plaintext);
+}
+
+static aria_u128_t 
+aria_decrypt_128 (aria_u128_t Key, aria_u128_t Ciphertext)
+{
+  aria_key_schedule_t ks;
+
+  aria_error_code_t err = aria_init_key_schedule(&ks, Key, /* don't care */ Key, DECRYPT, 128u);
+
+  if (NO_ERROR != err)
+  {
+    fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+  }
+
+  return aria_crypt(&ks, Ciphertext);
+}
+
+static aria_u128_t 
+aria_decrypt_192 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Ciphertext)
+{
+  aria_key_schedule_t ks;
+
+  aria_error_code_t err = aria_init_key_schedule(&ks, KeyLeft, KeyRight, DECRYPT, 192u);
+
+  if (NO_ERROR != err)
+  {
+    fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+  }
+
+  return aria_crypt(&ks, Ciphertext);
+}
+
+static aria_u128_t 
+aria_decrypt_256 (aria_u128_t KeyLeft, aria_u128_t KeyRight, aria_u128_t Ciphertext)
+{
+  aria_key_schedule_t ks;
+
+  aria_error_code_t err = aria_init_key_schedule(&ks, KeyLeft, KeyRight, DECRYPT, 256u);
+
+  if (NO_ERROR != err)
+  {
+    fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+  }
+
+  return aria_crypt(&ks, Ciphertext);
+}
 
 /*
 ** Appendix A.  Example Data of ARIA
@@ -1035,6 +1072,55 @@ int main (int argc, char **argv)
                   , errors
             );
 #endif
+
+    errors = 0u;
+
+    aria_key_schedule_t kse;
+    aria_key_schedule_t ksd;
+    aria_error_code_t err;
+
+    const uint32_t keystride = 128u * 2048u;
+
+    startm = timer_e_nanoseconds();
+    
+    for (uint32_t i = 0u; i < iterations; i++)
+    {
+      if ((i % keystride) == 0)
+      {
+        aria_u128_t KeyLeft   = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+        aria_u128_t KeyRight  = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+        err = aria_init_key_schedule(&kse, KeyLeft, KeyRight, ENCRYPT, 256u);
+        if (NO_ERROR != err)
+        {
+          fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+        }
+        err = aria_init_key_schedule(&ksd, KeyLeft, KeyRight, DECRYPT, 256u);
+        if (NO_ERROR != err)
+        {
+          fprintf(stderr, "aria_init_key_schedule returned error code %d\n", err);
+        }
+      }
+
+      aria_u128_t Plaintext  = (aria_u128_t ){ xorshift128plus_next(), xorshift128plus_next() };
+
+      aria_u128_t Ciphertext = aria_crypt(&kse, Plaintext);
+
+      aria_u128_t P = aria_crypt(&ksd, Ciphertext);
+
+      if (0 != memcmp((const void *)&Plaintext, (const void *)&P, sizeof(aria_u128_t)))
+      {
+        errors++;
+      }
+    }
+
+    endm = timer_e_nanoseconds();
+
+    fprintf(stderr, "For %u iterations %u keystride: %g ns per iteration with %u errors\n"
+                  , iterations
+                  , keystride
+                  , (endm - startm) / iterations
+                  , errors
+            );
   }
 }
 
