@@ -998,7 +998,9 @@ int main (int argc, char **argv)
     uint32_t errors = 0u;
 
     double startm = timer_e_nanoseconds();
+#if 0
     double startg = timer_e_nanoseconds_gtod();
+#endif
 
     for (uint32_t i = 0u; i < iterations; i++)
     {
@@ -1017,6 +1019,7 @@ int main (int argc, char **argv)
     }
 
     double endm = timer_e_nanoseconds();
+#if 0
     double endg = timer_e_nanoseconds_gtod();
 
     fprintf(stderr, "For %u iterations: %g ns (%g ns) per iteration with %u errors\n"
@@ -1025,6 +1028,13 @@ int main (int argc, char **argv)
                   , (endg - startg) / iterations
                   , errors
             );
+#else
+    fprintf(stderr, "For %u iterations: %g ns per iteration with %u errors\n"
+                  , iterations
+                  , (endm - startm) / iterations
+                  , errors
+            );
+#endif
   }
 }
 
